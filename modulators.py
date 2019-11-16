@@ -1,8 +1,9 @@
 import abc
 import numpy as np
 
+
 class Modulator(abc.ABC):
-    def __init__(self, levels, *args, **kwargs):
+    def __init__(self, levels, freq=1e4, amplitude=1., samples=20, duration=1):
         """
         The modulator will asume codified inputs to take at most `len(levels)`
         levels and for each of those levels li a modulation value levels[li]
@@ -11,10 +12,20 @@ class Modulator(abc.ABC):
         ----------
         levels : Dict[Int, Float]
             for each possible level li levels[li] contains a value
+        freq : float
+            base frequency to use when modulating
+        amplitude : float
+            base amplitude of the modulated wave
+        samples : int
+            number of (sub)samples per input byte
+        duration : float
+            default duration of sampling interval
         """
         self.levels = levels
-        self.A = kwargs.get('amplitude', 1)
-        self.freq = kwargs.get('freq', 2e3)
+        self.A = amplitude
+        self.freq = freq
+        self.samples = samples
+        self.duration = duration
 
     @abc.abstractmethod
     def signal(self, xs):
@@ -26,72 +37,90 @@ class Modulator(abc.ABC):
         ----------
         xs : numpy.array
             time steps where the signal is sampled
-        
+
         Returns
         -------
         Dict[int, numpy.array]
             Dictionary with signal responses for each level
         """
         pass
-    
-    def modulate(self, seq, xs):
+
+    def modulate(self, seq, duration=None):
         """
         Parameters
         ----------
         seq : numpy.array
             sequence to modulate
-            
+        samples : int
+            number of times each bit is sampled
+        duration : float
+            duration of the sample interval
+
         Returns
         -------
-        numpy.array
-            modulated sequence
+        (numpy.array, numpy.array)
+            modulated sequence, sampling interval
         """
-        sample_size = len(xs) // len(seq)
-        seq = np.repeat(seq, sample_size)
-        pad = len(xs) - len(seq)
-        seq = np.pad(seq, (0, pad), 'constant', constant_values=0)
+        duration = duration or self.duration
+        xs = np.linspace(0, duration, self.samples * len(seq))
+        seq = np.repeat(seq, self.samples)
         signals = self.signal(xs)
 
         ys = np.empty_like(xs)
         for k, signal in signals.items():
             idxs = seq == k
             ys[idxs] = signal[idxs]
-        if pad: ys[-pad:] = 0
-        return ys
+        return ys, xs
+
+    def demodulate(self, seq, xs):
+        """
+        Parameters
+        ----------
+        seq : numpy.array
+            sequence to modulate
+        xs : numpy.array
+            times where the sequence was sampled
+
+        Returns
+        -------
+        numpy.array
+            demodulated sequence
+        """
+        signals = self.signal(xs)
+        keys = np.array(list(signals.keys()))
+        vals = np.array(list(signals.values()))
+        # calculate estimated value for each sample
+        out_sample = keys[np.abs(vals - seq).argmin(axis=0)]
+        return np.median(out_sample.reshape((-1, self.samples)), axis=1).ravel().astype(int)
+
 
 class DefaultModulator(Modulator):
     def signal(self, xs):
         return {
-            k: np.ones_like(xs) * x for k,x in self.levels.items()
+            k: np.ones_like(xs) * x for k, x in self.levels.items()
         }
+
 
 class ASKModulator(Modulator):
 
     def signal(self, xs):
-        return { 
-            k: a * np.cos(2*np.pi *self.freq * xs) for k,a in self.levels.items() 
+        return {
+            k: a * np.cos(2*np.pi * self.freq * xs) for k, a in self.levels.items()
         }
 
-    def demodulate(self, seq, bins):
-        step = len(seq) // bins
-        out  = np.empty(bins, dtype=int)
-        for i,j in enumerate(range(0, step * bins, step)):
-            mpb = np.median(np.abs(seq[j:j+step]))
-            k = min(self.levels.keys(), key = lambda k: np.abs(self.levels[k]-mpb))
-            out[i] = k
 
-        return out
-        
 class FSKModulator(Modulator):
+
     def signal(self, xs):
         freqs = self.levels
         return {
-            k: self.A * np.cos(2*np.pi * f * xs) for k,f in self.levels.items()
+            k: self.A * np.cos(2*np.pi * f * xs) for k, f in self.levels.items()
         }
-    
+
+
 class PSKModulator(Modulator):
 
     def signal(self, xs):
         return {
-            k: self.A * np.cos(2*np.pi * self.freq * xs + off) for k,off in self.levels.items()
+            k: self.A * np.cos(2*np.pi * self.freq * xs + off) for k, off in self.levels.items()
         }
