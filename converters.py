@@ -44,6 +44,12 @@ class StringConverter:
 
         return np.array(ints)
 
+    def ascii2int(self, seq):
+        return np.array([ord(c) for c in seq])
+
+    def int2ascii(self, seq):
+        return ''.join(chr(i) for i in seq)
+
     def str2int(self, seq):
         """
         Parameters
@@ -73,15 +79,37 @@ class StringConverter:
         return ''.join(self.from_int[i] for i in arr)
 
     def from_string(self, seq):
-        return pipe(
-            self.str2int,
-            self.enc.encrypt,
-            self.int2bin,
-        )(seq)
+        mask = [c in self.from_int for c in seq]
+        seq = list(seq)
+
+        subseq = self.str2int([c for c in seq if c in self.from_int])
+        subseq = self.enc.encrypt(subseq)
+        subseq = self.int2str(subseq)
+
+        j = 0
+        for i, c in enumerate(seq):
+            if mask[i]:
+                seq[i] = subseq[j]
+                j += 1
+
+        seq_int = self.ascii2int(seq)
+        return self.int2bin(seq_int)
 
     def to_string(self, seq):
-        return pipe(
-            self.bin2int,
-            self.enc.decrypt,
-            self.int2str,
-        )(seq)
+        seq = self.bin2int(seq)
+        seq = self.int2ascii(seq)
+
+        mask = [c in self.from_int for c in seq]
+
+        subseq = self.str2int([c for c in seq if c in self.from_int])
+        subseq = self.enc.decrypt(subseq)
+        subseq = self.int2str(subseq)
+
+        seq = list(seq)
+        j = 0
+        for i, c in enumerate(seq):
+            if mask[i]:
+                seq[i] = subseq[j]
+                j += 1
+
+        return ''.join(seq)
